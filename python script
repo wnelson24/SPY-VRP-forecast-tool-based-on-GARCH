@@ -1,0 +1,82 @@
+import yfinance as yf
+import pandas as pd
+import numpy as np
+from arch import arch_model
+from datetime import datetime, timedelta
+
+# ----------------------------------------
+# STEP 1: Download SPY Price Data (1 year)
+# ----------------------------------------
+end_date = datetime.today()
+start_date = end_date - timedelta(days=365)
+
+spy = yf.download("SPY", start=start_date.strftime('%Y-%m-%d'), end=end_date.strftime('%Y-%m-%d'), auto_adjust=False)
+returns = 100 * spy['Adj Close'].pct_change().dropna()
+
+# ----------------------------------------
+# STEP 2: Fit GARCH(1,1)
+# ----------------------------------------
+model = arch_model(returns, vol='GARCH', p=1, q=1)
+res = model.fit(disp='off')
+
+# ----------------------------------------
+# STEP 3: Forecast Event-Window Realized Vol (2 days)
+# ----------------------------------------
+horizon = 2  # Event window in days
+forecast = res.forecast(horizon=horizon)
+daily_var_forecast = forecast.variance.values[-1]
+event_var = daily_var_forecast[:horizon].sum()
+
+# ✅ Annualize the GARCH forecasted RV
+event_rv_annualized = np.sqrt(event_var * 252 / horizon)
+
+# ----------------------------------------
+# STEP 4: Get ATM IV from Options Chain
+# ----------------------------------------
+ticker = yf.Ticker("SPY")
+option_dates = ticker.options
+
+# Select next expiry > 1 day out
+target_expiry = next(
+    (date for date in option_dates if datetime.strptime(date, "%Y-%m-%d") > end_date + timedelta(days=1)),
+    None
+)
+
+if target_expiry:
+    chain = ticker.option_chain(target_expiry)
+    calls = chain.calls
+    puts = chain.puts
+    spot = spy['Adj Close'].iloc[-1].item()  # Safe float extraction
+
+    strike_list = calls['strike'].dropna().tolist()
+    atm_strike = min(strike_list, key=lambda x: abs(x - spot))
+
+    call_iv = calls[calls['strike'] == atm_strike]['impliedVolatility'].values
+    put_iv = puts[puts['strike'] == atm_strike]['impliedVolatility'].values
+
+    if call_iv.size > 0 and put_iv.size > 0:
+        avg_iv = np.mean([call_iv[0], put_iv[0]])
+    else:
+        avg_iv = None
+else:
+    avg_iv = None
+
+# ----------------------------------------
+# STEP 5: Final Signal
+# ----------------------------------------
+print("\n=== SPY Event-Driven Volatility Insight ===")
+print(f"Spot Price: ${spot:.2f}")
+print(f"Event Horizon: {horizon} day(s)")
+print(f"GARCH Forecast RV (annualized): {event_rv_annualized:.2f}%")
+if avg_iv:
+    print(f"ATM IV (Options Expiry {target_expiry}): {avg_iv * 100:.2f}%")
+    diff = (avg_iv * 100) - event_rv_annualized
+    if diff > 1.0:
+        print("🔴 Implied vol is significantly above forecasted RV → RISK-OFF sentiment.")
+    elif diff < -1.0:
+        print("🟢 Implied vol is underpricing forecasted risk → RISK-ON opportunity.")
+    else:
+        print("⚪ IV and RV are aligned → Neutral.")
+else:
+    print("⚠️ Unable to retrieve ATM IV — check options data.")
+print("============================================\n")
