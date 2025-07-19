@@ -1,0 +1,47 @@
+# SPY Event-Driven VRP Forecast Tool
+
+This tool forecasts short-term **realized volatility** for SPY using a **GARCH(1,1)** model and compares it to **market-implied volatility (IV)** from near-term ATM options.
+
+It's designed to be run **right before major market events** (e.g., FOMC, CPI, NFP) to help assess whether the options market is overpricing or underpricing volatility.
+
+---
+
+## What It Does
+
+- Downloads 1 year of SPY historical prices
+- Fits a GARCH(1,1) model to forecast volatility over a user-defined **event window** (default: 2 days)
+- Pulls ATM implied volatility from SPY options expiring just after the event
+- Compares the **annualized GARCH forecast** to the **annualized IV**
+- Generates a sentiment signal:
+  - Risk-Off → Market expects more vol than model forecasts
+  - Neutral → Model and market agree
+  - Risk-On → Model forecasts more vol than market is pricing in
+
+---
+
+## Why It Works
+
+This script estimates whether the market is **over- or under-pricing** short-term risk around known catalysts by comparing:
+
+| Metric | Source | Meaning |
+|--------|--------|---------|
+| Implied Volatility (IV) | SPY ATM options | Market's expected volatility |
+| Forecasted Realized Volatility (RV) | GARCH(1,1) | Statistically projected volatility |
+
+Both are annualized and aligned to the same short-term window (e.g. 2 days), allowing for a **fair volatility risk premium (VRP) comparison**.
+
+---
+
+## Requirements
+
+- Python 3.8+
+- Packages:
+  - `yfinance`
+  - `arch`
+  - `pandas`
+  - `numpy`
+
+Install with:
+
+```bash
+pip install yfinance arch pandas numpy
